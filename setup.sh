@@ -73,6 +73,10 @@ load_env_file() {
   fi
 }
 
+echo 'ES_HOST="http://localhost:30920"' >> /root/.env
+echo 'KIBANA_URL="http://localhost:30002"' >> /root/.env
+
+
 if [[ -n "$PROFILE" ]]; then
   load_env_file "$SCRIPT_DIR/.env.${PROFILE}"
 else
@@ -82,10 +86,6 @@ fi
 # Support Instruqt/k8s environment variable conventions
 # ELASTICSEARCH_URL is the Instruqt name for the ES endpoint
 ES_HOST="${ES_HOST:-${ELASTICSEARCH_URL:-}}"
-
-echo 'ES_HOST="http://localhost:30920"' >> /root/.env
-echo 'KIBANA_URL="http://localhost:30002"' >> /root/.env
-
 
 # In k8s Instruqt labs the ECK operator stores the elastic password in a secret.
 # Pull it automatically when no password has been supplied via .env.
