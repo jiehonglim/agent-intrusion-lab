@@ -50,6 +50,10 @@ COMPONENT_TEMPLATES: list[dict[str, Any]] = [
                                 "category":  {"type": "keyword"},
                                 "type":      {"type": "keyword"},
                                 "provider":  {"type": "keyword"},
+                                "ingested":  {
+                                    "type": "date",
+                                    "format": "strict_date_optional_time||epoch_millis",
+                                },
                             }
                         },
                         "source": {

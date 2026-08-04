@@ -26,23 +26,25 @@ def compute_anchor_ms():
 
     start_dt = datetime.fromtimestamp(campaign_start_ms / 1000, tz=timezone.utc)
     end_dt = datetime.fromtimestamp(campaign_end_ms / 1000, tz=timezone.utc)
-    print(
-        f"Campaign: {start_dt.strftime('%Y-%m-%d %H:%M')} → "
-        f"{end_dt.strftime('%Y-%m-%d %H:%M')} UTC"
-    )
+    start_human = start_dt.strftime("%Y-%m-%d %H:%M")
+    end_human = end_dt.strftime("%Y-%m-%d %H:%M")
+    print(f"Campaign: {start_human} → {end_human} UTC")
 
-    return anchor_ms, campaign_start_ms, campaign_end_ms
+    return anchor_ms, campaign_start_ms, campaign_end_ms, start_human, end_human
 
 
 def all_docs(rng, anchor_ms, total_target, ds_namespace):
+    ingest_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     count = 0
 
     for doc in attack_docs(rng, anchor_ms, ds_namespace):
+        doc.setdefault("event", {})["ingested"] = ingest_time
         doc["_op_type"] = "create"
         yield doc
         count += 1
 
     for doc in confounder_docs(rng, anchor_ms, ds_namespace):
+        doc.setdefault("event", {})["ingested"] = ingest_time
         doc["_op_type"] = "create"
         yield doc
         count += 1
@@ -50,6 +52,7 @@ def all_docs(rng, anchor_ms, total_target, ds_namespace):
     remaining = total_target - count
     if remaining > 0:
         for doc in noise_docs(rng, anchor_ms, remaining, ds_namespace):
+            doc.setdefault("event", {})["ingested"] = ingest_time
             doc["_op_type"] = "create"
             yield doc
 
@@ -60,7 +63,7 @@ def load(host, api_key, seed=SEED, total_target=TOTAL_TARGET, bulk_host=None, dr
 
     install_schema(es)
 
-    anchor_ms, campaign_start_ms, campaign_end_ms = compute_anchor_ms()
+    anchor_ms, campaign_start_ms, campaign_end_ms, start_human, end_human = compute_anchor_ms()
 
     rng = random.Random(seed)
 
@@ -116,6 +119,8 @@ def load(host, api_key, seed=SEED, total_target=TOTAL_TARGET, bulk_host=None, dr
             "anchor_ms": anchor_ms,
             "campaign_start_ms": campaign_start_ms,
             "campaign_end_ms": campaign_end_ms,
+            "campaign_start_human": start_human,
+            "campaign_end_human": end_human,
             "total_docs": ok,
             "seed": seed,
             "loaded_at": datetime.now(timezone.utc).isoformat(),

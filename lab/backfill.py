@@ -77,6 +77,8 @@ def run_backfill(
     bulk_path = "/api/detection_engine/rules/_bulk_action"
     total_scheduled = 0
 
+    import requests as _requests
+
     for chunk_start in range(0, len(so_ids), _CHUNK_SIZE):
         chunk = so_ids[chunk_start: chunk_start + _CHUNK_SIZE]
         body = {
@@ -98,6 +100,34 @@ def run_backfill(
                 unversioned=False,
             )
             total_scheduled += len(chunk)
+        except _requests.HTTPError as exc:
+            # Kibana returns 500 for partial failures — some rules may have been
+            # scheduled successfully while others were disabled. Extract the
+            # partial results from the response body before reporting failure.
+            partial = 0
+            try:
+                resp_body = exc.response.json()
+                attrs = resp_body.get("attributes", {})
+                updated = attrs.get("results", {}).get("updated", [])
+                partial = len(updated)
+                for err_entry in attrs.get("errors", []):
+                    disabled = err_entry.get("rules", [])
+                    names = ", ".join(r["name"] for r in disabled[:3])
+                    suffix = "..." if len(disabled) > 3 else ""
+                    print(f"  SKIP (disabled): {names}{suffix}")
+            except Exception:
+                pass
+            if partial:
+                print(
+                    f"  Partially succeeded: {partial}/{len(chunk)} rules scheduled "
+                    f"(chunk [{chunk_start}:{chunk_start + len(chunk)}])."
+                )
+                total_scheduled += partial
+            else:
+                print(
+                    f"WARNING: bulk_action run failed for chunk "
+                    f"[{chunk_start}:{chunk_start + len(chunk)}]: {exc}"
+                )
         except Exception as exc:
             print(
                 f"WARNING: bulk_action run failed for chunk "
