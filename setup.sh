@@ -211,8 +211,8 @@ elif [[ -z "${ES_API_KEY:-}" ]]; then
   exit 1
 fi
 
-# export ES_HOST
-# export ES_API_KEY
+export ES_HOST
+export ES_API_KEY
 
 # Derive KIBANA_URL from ES_HOST if not set
 if [[ -z "${KIBANA_URL:-}" ]]; then
@@ -223,11 +223,21 @@ if [[ -z "${KIBANA_URL:-}" ]]; then
     KIBANA_URL="${_base}:5601"
   fi
 fi
-# export KIBANA_URL
+export KIBANA_URL
 
 if [[ -n "${ES_HOST_BULK:-}" ]]; then
   export ES_HOST_BULK
 fi
+
+# Rewrite .env with canonical names so Python's load_env() always finds them,
+# regardless of what the Instruqt lifecycle script originally wrote.
+# (.env is gitignored — safe to store the session API key here.)
+{
+  printf 'ES_HOST=%s\n'    "$ES_HOST"
+  printf 'ES_API_KEY=%s\n' "$ES_API_KEY"
+  printf 'KIBANA_URL=%s\n' "$KIBANA_URL"
+  [[ -n "${ES_HOST_BULK:-}" ]] && printf 'ES_HOST_BULK=%s\n' "$ES_HOST_BULK"
+} > "$SCRIPT_DIR/.env"
 
 # Check Python 3.9+
 if ! command -v python3 &>/dev/null; then
