@@ -93,14 +93,25 @@ ES_HOST="${ES_HOST:-${ELASTICSEARCH_URL:-}}"
 
 # Sanitize corrupted password values.  The Instruqt lifecycle script appends the
 # kubectl go-template output (which has no trailing newline) followed by the next
-# echo line into a single .env line.  A real password never contains '=' or spaces.
-if [[ "${ELASTICSEARCH_PASSWORD:-}" =~ [[:space:]=] ]]; then
-  echo "WARNING: ELASTICSEARCH_PASSWORD looks corrupted (missing-newline artifact); re-pulling from k8s secret"
-  ELASTICSEARCH_PASSWORD=""
-fi
-if [[ "${ES_PASSWORD:-}" =~ [[:space:]=] ]]; then
-  ES_PASSWORD=""
-fi
+# echo line into a single .env line, e.g.:
+#   ELASTICSEARCH_PASSWORD=<pass>ES_HOST="http://localhost:30920"
+# A real password never contains '=' or spaces.  Before clearing, salvage any
+# embedded URL so ES_HOST is not also lost.
+for _corrupted_var in ELASTICSEARCH_PASSWORD ES_PASSWORD; do
+  _val="${!_corrupted_var:-}"
+  if [[ "$_val" =~ [[:space:]=] ]]; then
+    # Try to recover an embedded http(s) URL from the corrupted value
+    _embedded_url=$(echo "$_val" | grep -oE 'https?://[^"[:space:]]+' | head -1)
+    if [[ -n "$_embedded_url" ]]; then
+      if [[ -z "${ES_HOST:-}" && -z "${ELASTICSEARCH_URL:-}" ]]; then
+        ES_HOST="$_embedded_url"
+        echo "WARNING: Recovered ES_HOST=$ES_HOST from corrupted $_corrupted_var line"
+      fi
+    fi
+    echo "WARNING: $_corrupted_var looks corrupted (missing-newline artifact); re-pulling from k8s secret"
+    printf -v "$_corrupted_var" ''
+  fi
+done
 
 # In k8s Instruqt labs the ECK operator stores the elastic password in a secret.
 # Pull it automatically when no password has been supplied via .env.
