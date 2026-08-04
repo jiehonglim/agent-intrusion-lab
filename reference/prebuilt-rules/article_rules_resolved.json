@@ -1,0 +1,384 @@
+{
+ "Suspicious Child Execution via Web Server": {
+  "name": "Suspicious Child Execution via Web Server",
+  "rule_id": "f16fca20-4d6c-43f9-aec1-20b6de3b0aeb",
+  "type": "eql",
+  "index": [
+   "logs-endpoint.events.process*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Curl or Wget Spawned via Node.js": {
+  "name": "Curl or Wget Spawned via Node.js",
+  "rule_id": "d9af2479-ad13-4471-a312-f586517f1243",
+  "type": "eql",
+  "index": [
+   "endgame-*",
+   "logs-crowdstrike.fdr*",
+   "logs-endpoint.events.process-*",
+   "logs-sentinel_one_cloud_funnel.*",
+   "logs-system.security*",
+   "logs-windows.forwarded*",
+   "logs-windows.sysmon_operational-*",
+   "winlogbeat-*",
+   "auditbeat-*",
+   "logs-auditd_manager.auditd-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "GenAI Process Accessing Sensitive Files": {
+  "name": "GenAI Process Accessing Sensitive Files",
+  "rule_id": "c0136397-f82a-45e5-9b9f-a3651d77e21a",
+  "type": "eql",
+  "index": [
+   "logs-endpoint.events.file*"
+  ],
+  "severity": "high",
+  "risk_score": 73
+ },
+ "Kubernetes Direct API Request via Curl or Wget": {
+  "name": "Kubernetes Direct API Request via Curl or Wget",
+  "rule_id": "b53f1d73-150d-484d-8f02-222abeb5d5fa",
+  "type": "eql",
+  "index": [
+   "auditbeat-*",
+   "endgame-*",
+   "logs-crowdstrike.fdr*",
+   "logs-endpoint.events.process*",
+   "logs-sentinel_one_cloud_funnel.*",
+   "logs-auditd_manager.auditd-*",
+   "logs-cloud_defend.process*",
+   "logs-system.security*",
+   "logs-windows.forwarded*",
+   "logs-windows.sysmon_operational-*",
+   "winlogbeat-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Secrets List Across Cluster or Sensitive Namespaces": {
+  "name": "Kubernetes Secrets List Across Cluster or Sensitive Namespaces",
+  "rule_id": "7e3f9a2b-1c4d-5e6f-8a0b-9c8d7e6f5a4b",
+  "type": "query",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "high",
+  "risk_score": 73
+ },
+ "Kubernetes Rapid Secret GET Activity Against Multiple Objects": {
+  "name": "Kubernetes Rapid Secret GET Activity Against Multiple Objects",
+  "rule_id": "b4c8e2a1-9f3d-4e7c-a2b1-0d5e6f7a8b9c",
+  "type": "esql",
+  "index": null,
+  "severity": "high",
+  "risk_score": 73
+ },
+ "Kubernetes Forbidden Request from Unusual User Agent": {
+  "name": "Kubernetes Forbidden Request from Unusual User Agent",
+  "rule_id": "4b77d382-b78e-4aae-85a0-8841b80e4fc4",
+  "type": "new_terms",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Forbidden Creation Request": {
+  "name": "Kubernetes Forbidden Creation Request",
+  "rule_id": "ec81962e-4bc8-48e6-bfb0-545fc97d8f6a",
+  "type": "eql",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Container Created with Excessive Linux Capabilities": {
+  "name": "Kubernetes Container Created with Excessive Linux Capabilities",
+  "rule_id": "7164081a-3930-11ed-a261-0242ac120002",
+  "type": "query",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Pod Created With HostPID": {
+  "name": "Kubernetes Pod Created With HostPID",
+  "rule_id": "df7fda76-c92b-4943-bc68-04460a5ea5ba",
+  "type": "query",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Unusual Kubernetes Sensitive Workload Modification": {
+  "name": "Unusual Kubernetes Sensitive Workload Modification",
+  "rule_id": "78c6559d-47a7-4f30-91fe-7e2e983206c2",
+  "type": "new_terms",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "low",
+  "risk_score": 21
+ },
+ "Kubernetes Anonymous Request Authorized by Unusual User Agent": {
+  "name": "Kubernetes Anonymous Request Authorized by Unusual User Agent",
+  "rule_id": "63c057cc-339a-11ed-a261-0242ac120002",
+  "type": "new_terms",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Secret get or list with Suspicious User Agent": {
+  "name": "Kubernetes Secret get or list with Suspicious User Agent",
+  "rule_id": "a4c8e901-2b7f-4d6e-9a3c-8e1f0d5b6c2a",
+  "type": "query",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "high",
+  "risk_score": 73
+ },
+ "Kubernetes Secret get or list from Node or Pod Service Account": {
+  "name": "Kubernetes Secret get or list from Node or Pod Service Account",
+  "rule_id": "f8a31c62-0d4e-4b9a-b7e1-6c2a9d4e8f10",
+  "type": "query",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Service Account Token Created via TokenRequest API": {
+  "name": "Kubernetes Service Account Token Created via TokenRequest API",
+  "rule_id": "4df91789-7859-4bc4-9c5a-6b56bfa81a8b",
+  "type": "query",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Suspicious Self-Subject Review via Unusual User Agent": {
+  "name": "Kubernetes Suspicious Self-Subject Review via Unusual User Agent",
+  "rule_id": "12a2f15d-597e-4334-88ff-38a02cb1330b",
+  "type": "new_terms",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "low",
+  "risk_score": 21
+ },
+ "Kubernetes Denied Service Account Request via Unusual User Agent": {
+  "name": "Kubernetes Denied Service Account Request via Unusual User Agent",
+  "rule_id": "63c056a0-339a-11ed-a261-0242ac120002",
+  "type": "new_terms",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "low",
+  "risk_score": 21
+ },
+ "Kubernetes Multi-Resource Discovery": {
+  "name": "Kubernetes Multi-Resource Discovery",
+  "rule_id": "c2a91e88-4f4b-4e1d-9c7b-8fde112a9403",
+  "type": "esql",
+  "index": null,
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Privileged Pod Created": {
+  "name": "Kubernetes Privileged Pod Created",
+  "rule_id": "c7908cac-337a-4f38-b50d-5eeb78bdb531",
+  "type": "query",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Kubernetes Pod Created with a Sensitive hostPath Volume": {
+  "name": "Kubernetes Pod Created with a Sensitive hostPath Volume",
+  "rule_id": "2abda169-416b-4bb3-9a6b-f8d239fd78ba",
+  "type": "query",
+  "index": [
+   "logs-kubernetes.audit_logs-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "AWS STS GetCallerIdentity API Called for the First Time": {
+  "name": "AWS STS GetCallerIdentity API Called for the First Time",
+  "rule_id": "30fbf4db-c502-4e68-a239-2e99af0f70da",
+  "type": "new_terms",
+  "index": [
+   "filebeat-*",
+   "logs-aws.cloudtrail-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "AWS Rare Source AS Organization Activity": {
+  "name": "AWS Rare Source AS Organization Activity",
+  "rule_id": "d1b37c0b-4f8b-4cfb-9a1d-639bf8c028b7",
+  "type": "esql",
+  "index": null,
+  "severity": "high",
+  "risk_score": 73
+ },
+ "AWS IAM Long-Term Access Key First Seen from Source IP": {
+  "name": "AWS IAM Long-Term Access Key First Seen from Source IP",
+  "rule_id": "9f8e3c5e-f72e-4e91-93f6-e98a4fae3e4f",
+  "type": "new_terms",
+  "index": [
+   "logs-aws.cloudtrail-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "AWS Access Token Used from Multiple Addresses": {
+  "name": "AWS Access Token Used from Multiple Addresses",
+  "rule_id": "0d92d30a-5f3e-4b71-bc3d-4a0c4914b7e0",
+  "type": "esql",
+  "index": null,
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "AWS EC2 Role GetCallerIdentity from New Source AS Organization": {
+  "name": "AWS EC2 Role GetCallerIdentity from New Source AS Organization",
+  "rule_id": "b2f8c4e1-6a73-4f1e-9c2d-8e5b0a1d3f7c",
+  "type": "new_terms",
+  "index": [
+   "filebeat-*",
+   "logs-aws.cloudtrail-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Elastic Defend Alert from GenAI Utility or Descendant": {
+  "name": "Elastic Defend Alert from GenAI Utility or Descendant",
+  "rule_id": "d4e5f6a7-b8c9-7d0e-1f2a-3b4c5d6e7f8a",
+  "type": "esql",
+  "index": null,
+  "severity": "critical",
+  "risk_score": 99
+ },
+ "LLM-Based Attack Chain Triage by Host": {
+  "name": "LLM-Based Attack Chain Triage by Host",
+  "rule_id": "f236cca1-e887-4d14-9ba9-bb8dd3e16cf1",
+  "type": "esql",
+  "index": null,
+  "severity": "critical",
+  "risk_score": 99
+ },
+ "Unusual Process Modifying GenAI Configuration File": {
+  "name": "Unusual Process Modifying GenAI Configuration File",
+  "rule_id": "590fc62d-7386-4c75-92b0-af4517018da1",
+  "type": "new_terms",
+  "index": [
+   "logs-endpoint.events.file*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Connection to Common Large Language Model Endpoints": {
+  "name": "Connection to Common Large Language Model Endpoints",
+  "rule_id": "4ae94fc1-f08f-419f-b692-053d28219380",
+  "type": "eql",
+  "index": [
+   "endgame-*",
+   "logs-endpoint.events.network-*",
+   "logs-sentinel_one_cloud_funnel.*",
+   "logs-windows.sysmon_operational-*",
+   "winlogbeat-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "GenAI Process Connection to Unusual Domain": {
+  "name": "GenAI Process Connection to Unusual Domain",
+  "rule_id": "9050506c-df6d-4bdf-bc82-fcad0ef1e8c1",
+  "type": "new_terms",
+  "index": [
+   "logs-endpoint.events.network*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "GenAI Process Connection to Suspicious Top Level Domain": {
+  "name": "GenAI Process Connection to Suspicious Top Level Domain",
+  "rule_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "type": "eql",
+  "index": [
+   "logs-endpoint.events.network*",
+   "winlogbeat-*",
+   "logs-windows.sysmon_operational-*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "GenAI Process Performing Encoding/Chunking Prior to Network Activity": {
+  "name": "GenAI Process Performing Encoding/Chunking Prior to Network Activity",
+  "rule_id": "c3d4e5f6-a7b8-9012-cdef-123456789abc",
+  "type": "eql",
+  "index": [
+   "logs-endpoint.events.process-*",
+   "logs-endpoint.events.network-*",
+   "logs-windows.sysmon_operational-*",
+   "winlogbeat-*",
+   "logs-m365_defender.event-*",
+   "logs-sentinel_one_cloud_funnel.*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Suspicious Interpreter Execution Detected via Defend for Containers": {
+  "name": "Suspicious Interpreter Execution Detected via Defend for Containers",
+  "rule_id": "cd24c340-b778-44bd-ab69-2f739bd70ce1",
+  "type": "eql",
+  "index": [
+   "logs-cloud_defend.process*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Service Account Token or Certificate Read Detected via Defend for Containers": {
+  "name": "Service Account Token or Certificate Read Detected via Defend for Containers",
+  "rule_id": "66229f32-c460-410d-bc37-4b32322cd4bb",
+  "type": "eql",
+  "index": [
+   "logs-cloud_defend.file*",
+   "logs-cloud_defend.process*"
+  ],
+  "severity": "medium",
+  "risk_score": 47
+ },
+ "Service Account Namespace Read Detected via Defend for Containers": {
+  "name": "Service Account Namespace Read Detected via Defend for Containers",
+  "rule_id": "f7c64a1b-9d00-4b92-9042-d3bb4196899a",
+  "type": "eql",
+  "index": [
+   "logs-cloud_defend.file*",
+   "logs-cloud_defend.process*"
+  ],
+  "severity": "low",
+  "risk_score": 21
+ },
+ "DNS Enumeration Detected via Defend for Containers": {
+  "name": "DNS Enumeration Detected via Defend for Containers",
+  "rule_id": "74ee9a2d-5ed3-40c8-9e6c-523d2e6a17ef",
+  "type": "eql",
+  "index": [
+   "logs-cloud_defend.process*"
+  ],
+  "severity": "low",
+  "risk_score": 21
+ }
+}

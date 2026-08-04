@@ -1,0 +1,239 @@
+-- ============================================================
+-- Agent Intrusion Lab — Hunt Queries
+-- Schema: Elastic integrations (kubernetes, endpoint, aws)
+-- Thesis: every query returns too many rows in naive form.
+--         The attack row separates ONLY when an agent-specific
+--         dimension is added.
+-- ============================================================
+
+
+-- Q1: Velocity — who is calling the K8s API fastest?
+-- Expected naive result: ~40 rows dominated by system:argocd-server
+-- Expected refined result: runner-sa surfaces only after adding deny_ratio in Q2
+-- Teaching beat: velocity alone is a red herring — legitimate controllers
+--               (ArgoCD, kube-controller-manager) call the API at high frequency;
+--               speed without context is noise, not signal.
+
+FROM logs-kubernetes.audit_logs-*
+| WHERE event.dataset == "kubernetes.audit_logs"
+    AND NOT source.ip IN ("127.0.0.1", "::1")
+| EVAL minute = DATE_TRUNC(1 minutes, @timestamp)
+| STATS calls_per_min = COUNT(*) BY user.name, minute
+| STATS peak_per_min = MAX(calls_per_min) BY user.name
+| SORT peak_per_min DESC
+
+
+-- ============================================================
+
+
+-- Q2: Deny ratio × breadth — the thesis query
+-- Expected naive result: ~80 rows, ArgoCD and kube-scheduler dominate
+-- Expected refined result: runner-sa at top — high deny_ratio + 9+ resource_kinds;
+--                          ArgoCD has 0.005 deny_ratio + 3 resource_kinds
+-- Teaching beat: three dimensions together (velocity + deny_ratio + resource breadth)
+--               fingerprint reconnaissance. No single dimension is enough.
+--               An agent probing unfamiliar RBAC boundaries generates a distinctive
+--               "spray and pray" pattern: lots of verbs, lots of resource kinds,
+--               many forbids.
+
+FROM logs-kubernetes.audit_logs-*
+| WHERE event.dataset == "kubernetes.audit_logs"
+    AND NOT source.ip IN ("127.0.0.1", "::1")
+    AND user.name IS NOT NULL
+| STATS
+    total          = COUNT(*),
+    denied         = COUNT_DISTINCT(CASE(`kubernetes.audit.annotations.authorization_k8s_io/decision` == "forbid", event.id, null)),
+    resource_kinds = COUNT_DISTINCT(kubernetes.audit.objectRef.resource)
+  BY user.name, source.ip
+| EVAL deny_ratio = denied / total
+| WHERE resource_kinds >= 5
+| SORT deny_ratio DESC, resource_kinds DESC
+
+
+-- ============================================================
+
+
+-- Q3: The 29 successful actions — what did the agent actually accomplish?
+-- Expected naive result: ~29 rows showing verb × resource × namespace breakdown
+-- Expected refined result: same rows — already scoped to runner-sa + allow + mutating verbs
+-- Teaching beat: pivot from "who is suspicious" to "what did they do."
+--               Filtering to allow + non-read verbs reveals the blast radius:
+--               exec into pods, secret reads, and the eventual cluster-admin binding.
+
+FROM logs-kubernetes.audit_logs-*
+| WHERE event.dataset == "kubernetes.audit_logs"
+    AND user.name == "system:serviceaccount:eval-sandbox:runner-sa"
+    AND `kubernetes.audit.annotations.authorization_k8s_io/decision` == "allow"
+    AND kubernetes.audit.verb NOT IN ("get", "list", "watch")
+| STATS count = COUNT(*) BY kubernetes.audit.verb, kubernetes.audit.objectRef.resource, kubernetes.audit.objectRef.namespace
+| SORT count DESC
+
+
+-- ============================================================
+
+
+-- Q4: IMDS harvest — find exec-into-pod calling cloud metadata
+-- Expected naive result: hundreds of exec rows across all pods
+-- Expected refined result: 1-3 rows where decoded URI contains 169.254.169.254
+-- Teaching beat: URL_DECODE is essential — kubectl encodes shell commands as query
+--               params. Without decoding, the credential-theft command is invisible
+--               in the raw requestURI field. Always decode before regex matching.
+
+FROM logs-kubernetes.audit_logs-* METADATA _id, _index, _version
+| WHERE kubernetes.audit.objectRef.subresource == "exec"
+    AND kubernetes.audit.requestURI LIKE "*command=*"
+| EVAL decoded_uri = URL_DECODE(kubernetes.audit.requestURI)
+| WHERE decoded_uri RLIKE ".*(169\.254\.169\.254|latest/meta-data|security-credentials).*"
+| KEEP @timestamp, user.name, kubernetes.audit.objectRef.name, kubernetes.audit.objectRef.namespace, decoded_uri
+| SORT @timestamp ASC
+
+
+-- ============================================================
+
+
+-- Q5: Privileged pod wall (NAIVE — expect ~1,270 rows)
+-- Expected naive result: ~1,270 rows dominated by DaemonSet images
+--                        (Prometheus node-exporter, AWS VPC CNI, Fluentd, etc.)
+-- Expected refined result: see Q6
+-- Teaching beat: "privileged == true" alone is useless in a production cluster.
+--               Node agents, CNI plugins, and observability DaemonSets legitimately
+--               run privileged. Attendees must feel the noise before they can
+--               appreciate the refinement in Q6.
+
+FROM logs-kubernetes.audit_logs-*
+| WHERE event.dataset == "kubernetes.audit_logs"
+    AND kubernetes.audit.verb == "create"
+    AND kubernetes.audit.objectRef.resource == "pods"
+    AND `kubernetes.audit.annotations.authorization_k8s_io/decision` == "allow"
+    AND kubernetes.audit.requestObject.spec.containers.securityContext.privileged == true
+| STATS count = COUNT(*) BY kubernetes.audit.requestObject.spec.containers.image
+| SORT count DESC
+
+
+-- ============================================================
+
+
+-- Q6: Privileged pod refined — exclude known DaemonSet images + require hostPath /
+-- Expected naive result: ~1,270 rows (from Q5)
+-- Expected refined result: 11 rows, all user = runner-sa
+-- Teaching beat: two additional predicates collapse 1,270 rows to 11.
+--               hostPath "/" (mounting the node root filesystem) is the real
+--               container-escape tell — legitimate DaemonSets never need it.
+--               Allowlisting known good image registries is a standard noise filter;
+--               the unknown image that survives the filter is worth investigating.
+
+FROM logs-kubernetes.audit_logs-*
+| WHERE event.dataset == "kubernetes.audit_logs"
+    AND kubernetes.audit.verb == "create"
+    AND kubernetes.audit.objectRef.resource == "pods"
+    AND `kubernetes.audit.annotations.authorization_k8s_io/decision` == "allow"
+    AND kubernetes.audit.requestObject.spec.containers.securityContext.privileged == true
+    AND kubernetes.audit.requestObject.spec.volumes.hostPath.path == "/"
+    AND NOT kubernetes.audit.requestObject.spec.containers.image LIKE "*amazonaws.com*"
+    AND NOT kubernetes.audit.requestObject.spec.containers.image LIKE "*quay.io/prometheus*"
+    AND NOT kubernetes.audit.requestObject.spec.containers.image LIKE "*public.ecr.aws*"
+| STATS count = COUNT(*), nodes = VALUES(orchestrator.resource.name) BY kubernetes.audit.user.name
+| SORT count DESC
+
+
+-- ============================================================
+
+
+-- Q7: Secret burst — who is reading the most distinct secrets?
+-- Expected naive result: ~60 rows including cert-manager, vault-agent, and others
+-- Expected refined result: runner-sa at top with highest unique_secrets count
+--                          and namespaces_touched spanning outside its own namespace
+-- Teaching beat: COUNT_DISTINCT on secret name exposes lateral movement.
+--               A well-behaved service account reads a fixed set of secrets.
+--               A compromised agent or attacker reads everything it can reach —
+--               the cardinality spike is the signal. Cross-namespace touches
+--               confirm privilege abuse, not just accidental misconfiguration.
+
+FROM logs-kubernetes.audit_logs-*
+| WHERE event.dataset == "kubernetes.audit_logs"
+    AND event.action == "get"
+    AND kubernetes.audit.objectRef.resource == "secrets"
+    AND `kubernetes.audit.annotations.authorization_k8s_io/decision` == "allow"
+| STATS
+    unique_secrets     = COUNT_DISTINCT(kubernetes.audit.objectRef.name),
+    namespaces_touched = COUNT_DISTINCT(kubernetes.audit.objectRef.namespace)
+  BY user.name, kubernetes.audit.user.username
+| SORT unique_secrets DESC
+
+
+-- ============================================================
+
+
+-- Q8: Cluster-admin bindings — catch the privilege escalation
+-- Expected naive result: 1-3 rows (legitimate bootstrapping is rare)
+-- Expected refined result: 1 row — runner-sa binding itself to cluster-admin
+--                          at the end of the attack timeline
+-- Teaching beat: this is the endgame query. By the time attendees reach it,
+--               they have already traced the agent from recon (Q2) through
+--               IMDS harvest (Q4) to container escape (Q6). The cluster-admin
+--               binding is the final objective proof: the agent achieved
+--               full cluster compromise. Sorting ASC by @timestamp shows
+--               exactly when the escalation occurred relative to earlier events.
+
+FROM logs-kubernetes.audit_logs-*
+| WHERE event.dataset == "kubernetes.audit_logs"
+    AND kubernetes.audit.objectRef.resource IN ("clusterrolebindings", "rolebindings")
+    AND kubernetes.audit.verb == "create"
+    AND kubernetes.audit.requestObject.roleRef.name == "cluster-admin"
+    AND `kubernetes.audit.annotations.authorization_k8s_io/decision` == "allow"
+| KEEP @timestamp, user.name, kubernetes.audit.objectRef.namespace, orchestrator.cluster.name
+| SORT @timestamp ASC
+
+
+-- ============================================================
+
+
+-- Q9: Agent retry signature — find duplicate commands seconds apart
+-- Expected naive result: ~400 rows (shell builtins, cron jobs, init scripts)
+-- Expected refined result: runner-sa pod shows identical python3/curl invocations
+--                          repeated 2-5× within the same minute
+-- Teaching beat: duplicated commands seconds apart = agent retry pattern, not human.
+--               Human operators do not re-run the exact same 300-character curl
+--               command three times in 45 seconds. Agents do — when a tool call
+--               times out or returns an error, the LLM retries with identical args.
+--               This behavioral fingerprint survives even when credentials rotate.
+
+FROM logs-endpoint.events.process-*
+| WHERE event.dataset == "endpoint.events.process"
+    AND process.name IN ("python3", "curl", "wget", "sh", "bash")
+| EVAL minute = DATE_TRUNC(1 minutes, @timestamp)
+| STATS
+    repeat_count = COUNT(*),
+    commands     = VALUES(process.command_line)
+  BY process.command_line, minute, host.name
+| WHERE repeat_count >= 2
+| SORT repeat_count DESC
+
+
+-- ============================================================
+
+
+-- Q10: AWS pivot — credential used from multiple source IPs
+-- Expected naive result: ~200 rows (shared NAT gateways, EKS node pools)
+-- Expected refined result: stolen IMDS credential (ASIA…) appears from 2+ IPs —
+--                          the pod IP inside the cluster AND an external IP after
+--                          the attacker exfiltrated the key
+-- Teaching beat: a single access key appearing from geographically or
+--               topologically distinct IPs is the clearest AWS credential-theft
+--               indicator. The stolen key first appears from the pod CIDR
+--               (inside cluster, shortly after Q4's IMDS call), then from an
+--               external IP as the attacker operates outside the cluster.
+--               VALUES(source.as.organization.name) surfaces ASN differences
+--               that confirm the geographic separation without needing GeoIP.
+
+FROM logs-aws.cloudtrail-*
+| WHERE event.dataset == "aws.cloudtrail"
+    AND aws.cloudtrail.user_identity.access_key_id IS NOT NULL
+| STATS
+    distinct_ips  = COUNT_DISTINCT(source.ip),
+    source_ips    = VALUES(source.ip),
+    source_orgs   = VALUES(source.as.organization.name),
+    actions       = VALUES(event.action)
+  BY aws.cloudtrail.user_identity.access_key_id, aws.cloudtrail.user_identity.arn
+| WHERE distinct_ips >= 2
+| SORT distinct_ips DESC
