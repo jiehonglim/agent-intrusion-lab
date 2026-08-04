@@ -62,6 +62,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Environment loading ────────────────────────────────────────────────────────
+echo 'ES_HOST="http://localhost:30920"' >> "$SCRIPT_DIR/.env"
+echo 'KIBANA_URL="http://localhost:30002"' >> "$SCRIPT_DIR/.env"
+
 load_env_file() {
   local env_file="$1"
   if [[ -f "$env_file" ]]; then
@@ -72,10 +75,6 @@ load_env_file() {
     set +a
   fi
 }
-
-echo 'ES_HOST="http://localhost:30920"' >> /root/.env
-echo 'KIBANA_URL="http://localhost:30002"' >> /root/.env
-
 
 if [[ -n "$PROFILE" ]]; then
   load_env_file "$SCRIPT_DIR/.env.${PROFILE}"
