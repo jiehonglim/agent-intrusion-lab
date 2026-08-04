@@ -189,8 +189,8 @@ elif [[ -z "${ES_API_KEY:-}" ]]; then
   exit 1
 fi
 
-export ES_HOST
-export ES_API_KEY
+# export ES_HOST
+# export ES_API_KEY
 
 # Derive KIBANA_URL from ES_HOST if not set
 if [[ -z "${KIBANA_URL:-}" ]]; then
@@ -201,7 +201,7 @@ if [[ -z "${KIBANA_URL:-}" ]]; then
     KIBANA_URL="${_base}:5601"
   fi
 fi
-export KIBANA_URL
+# export KIBANA_URL
 
 if [[ -n "${ES_HOST_BULK:-}" ]]; then
   export ES_HOST_BULK
