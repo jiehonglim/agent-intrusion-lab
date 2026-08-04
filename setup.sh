@@ -62,6 +62,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Environment loading ────────────────────────────────────────────────────────
+
+# Set up environment variables
+echo 'ELASTICSEARCH_USERNAME=elastic' >> "$SCRIPT_DIR/.env"
+kubectl get secret elasticsearch-es-elastic-user -n default -o go-template='ELASTICSEARCH_PASSWORD={{.data.elastic | base64decode}}' >> "$SCRIPT_DIR/.env"
+echo '' >> /root/.env
 echo 'ES_HOST="http://localhost:30920"' >> "$SCRIPT_DIR/.env"
 echo 'KIBANA_URL="http://localhost:30002"' >> "$SCRIPT_DIR/.env"
 
