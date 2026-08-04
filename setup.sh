@@ -79,6 +79,11 @@ else
   load_env_file "$SCRIPT_DIR/.env"
 fi
 
+# Support ELASTICSEARCH_USERNAME / ELASTICSEARCH_PASSWORD (Instruqt convention)
+# as aliases for ES_USERNAME / ES_PASSWORD
+ES_USERNAME="${ES_USERNAME:-${ELASTICSEARCH_USERNAME:-}}"
+ES_PASSWORD="${ES_PASSWORD:-${ELASTICSEARCH_PASSWORD:-}}"
+
 # ── Helper: stage timing ───────────────────────────────────────────────────────
 STAGE_START=0
 stage_begin() {
@@ -134,13 +139,31 @@ fi
 stage_begin "[1/9] Preflight"
 
 # Validate required env vars
-missing=()
-[[ -z "${ES_HOST:-}" ]]    && missing+=(ES_HOST)
-[[ -z "${ES_API_KEY:-}" ]] && missing+=(ES_API_KEY)
+if [[ -z "${ES_HOST:-}" ]]; then
+  echo "ERROR: ES_HOST is required." >&2
+  exit 1
+fi
 
-if [[ ${#missing[@]} -gt 0 ]]; then
-  echo "ERROR: Missing required environment variables: ${missing[*]}" >&2
-  echo "Set them in .env or export them before running this script." >&2
+# Auth: accept username+password OR pre-issued API key
+# If username+password supplied, generate a scoped API key and use that
+# for all subsequent steps (Python modules expect ES_API_KEY).
+if [[ -n "${ES_USERNAME:-}" && -n "${ES_PASSWORD:-}" ]]; then
+  echo "Auth: username/password → generating API key for session..."
+  BASE64=$(echo -n "${ES_USERNAME}:${ES_PASSWORD}" | base64)
+  _key_resp=$(curl -sf -m 15 \
+    -H "Authorization: Basic ${BASE64}" \
+    -H "Content-Type: application/json" \
+    "${ES_HOST}/_security/api_key" \
+    -d '{"name":"workshop-setup","expiration":"12h","role_descriptors":{}}')
+  if [[ -z "$_key_resp" ]]; then
+    echo "ERROR: Failed to generate API key from username/password." >&2
+    exit 1
+  fi
+  # encoded field is id:api_key base64 — ready for Authorization: ApiKey header
+  ES_API_KEY=$(echo "$_key_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['encoded'])")
+  echo "API key generated OK"
+elif [[ -z "${ES_API_KEY:-}" ]]; then
+  echo "ERROR: Provide either ES_API_KEY or ES_USERNAME + ES_PASSWORD in .env" >&2
   exit 1
 fi
 
@@ -149,15 +172,9 @@ export ES_API_KEY
 
 # Derive KIBANA_URL from ES_HOST if not set
 if [[ -z "${KIBANA_URL:-}" ]]; then
-  # Strip trailing slash, replace port 9200 with 5601, or append :5601
   _base="${ES_HOST%/}"
   if [[ "$_base" =~ :9200$ ]]; then
     KIBANA_URL="${_base/:9200/:5601}"
-  elif [[ "$_base" =~ :443$ ]]; then
-    # Cloud clusters: swap elastic. subdomain for kibana.
-    KIBANA_URL="${_base/\/\//\/\/}"
-    # Best effort: just try the same host on 5601
-    KIBANA_URL="${_base/:443/:5601}"
   else
     KIBANA_URL="${_base}:5601"
   fi
@@ -190,16 +207,19 @@ if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
   pip install -q -r "$SCRIPT_DIR/requirements.txt"
 fi
 
-echo "ES_HOST:     $ES_HOST"
-echo "KIBANA_URL:  $KIBANA_URL"
+echo "ES_HOST:    $ES_HOST"
+echo "KIBANA_URL: $KIBANA_URL"
 [[ -n "${ES_HOST_BULK:-}" ]] && echo "ES_HOST_BULK: $ES_HOST_BULK"
+[[ -n "${ES_USERNAME:-}" ]]  && echo "Auth:       username/password (${ES_USERNAME})"
+[[ -z "${ES_USERNAME:-}" ]]  && echo "Auth:       API key"
 
-# Wait for Kibana readiness
+# Wait for Kibana readiness (60 × 5s = 5 min)
 echo "Checking Kibana readiness..."
 kibana_ready=false
 for i in $(seq 1 60); do
-  if curl -sf -m 5 -o /dev/null "$KIBANA_URL/api/status" \
-      -H "Authorization: ApiKey $ES_API_KEY" 2>/dev/null; then
+  if curl -sf -m 5 -o /dev/null \
+      -H "Authorization: ApiKey ${ES_API_KEY}" \
+      "${KIBANA_URL}/api/status" 2>/dev/null; then
     echo "Kibana ready"
     kibana_ready=true
     break
@@ -214,6 +234,21 @@ if [[ "$kibana_ready" == false ]]; then
 fi
 
 stage_end
+
+# ═════════════════════════════════════════════════════════════════════════════
+# [1b] Security view
+# ═════════════════════════════════════════════════════════════════════════════
+echo ""
+echo "=== Setting Kibana default to Security view ==="
+curl -sf -m 10 -o /dev/null \
+  -X POST "${KIBANA_URL}/api/kibana/settings" \
+  -H "Authorization: ApiKey ${ES_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -H "elastic-api-version: 2023-10-31" \
+  -d '{"changes":{"defaultRoute":"/app/security"}}' \
+  && echo "Security view set" \
+  || echo "WARNING: Could not set Security view (non-fatal)"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [2/9] Schema
