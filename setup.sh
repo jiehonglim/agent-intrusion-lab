@@ -7,6 +7,7 @@ export PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 PROFILE=""
+FROM_STAGE=1
 SKIP_RULES=false
 NO_REPLAY=false
 VERIFY_ONLY=false
@@ -19,6 +20,7 @@ Usage: $0 [OPTIONS]
 
 Options:
   --profile <name>   Load environment from .env.<name>
+  --from-stage <n>   Resume from stage n (1-8); re-runs env setup, skips earlier stages
   --skip-rules       Skip prebuilt rule install + enable (data only)
   --no-replay        Historical + backfill only (no live replay)
   --verify-only      Re-run verification only
@@ -31,6 +33,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
       PROFILE="$2"
+      shift 2
+      ;;
+    --from-stage)
+      FROM_STAGE="$2"
       shift 2
       ;;
     --skip-rules)
@@ -62,14 +68,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Environment loading ────────────────────────────────────────────────────────
-
-# Set up environment variables
-echo 'ELASTICSEARCH_USERNAME=elastic' >> "$SCRIPT_DIR/.env"
-kubectl get secret elasticsearch-es-elastic-user -n default -o go-template='ELASTICSEARCH_PASSWORD={{.data.elastic | base64decode}}' >> "$SCRIPT_DIR/.env"
-echo '' >> /root/.env
-echo 'ES_HOST="http://localhost:30920"' >> "$SCRIPT_DIR/.env"
-echo 'KIBANA_URL="http://localhost:30002"' >> "$SCRIPT_DIR/.env"
-
 load_env_file() {
   local env_file="$1"
   if [[ -f "$env_file" ]]; then
@@ -178,19 +176,16 @@ if [[ "$VERIFY_ONLY" == true ]]; then
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
-# [1/9] Preflight
+# Always-run env setup (runs even when --from-stage > 1)
 # ═════════════════════════════════════════════════════════════════════════════
-stage_begin "[1/9] Preflight"
 
-# Validate required env vars
 if [[ -z "${ES_HOST:-}" ]]; then
   echo "ERROR: ES_HOST is required." >&2
   exit 1
 fi
 
-# Auth: accept username+password OR pre-issued API key
-# If username+password supplied, generate a scoped API key and use that
-# for all subsequent steps (Python modules expect ES_API_KEY).
+# Auth: username+password → generate a scoped API key valid for this session.
+# If ES_API_KEY is already set (e.g. loaded from a prior .env rewrite), use it.
 if [[ -n "${ES_USERNAME:-}" && -n "${ES_PASSWORD:-}" ]]; then
   echo "Auth: username/password → generating API key for session..."
   BASE64=$(echo -n "${ES_USERNAME}:${ES_PASSWORD}" | base64)
@@ -203,7 +198,6 @@ if [[ -n "${ES_USERNAME:-}" && -n "${ES_PASSWORD:-}" ]]; then
     echo "ERROR: Failed to generate API key from username/password." >&2
     exit 1
   fi
-  # encoded field is id:api_key base64 — ready for Authorization: ApiKey header
   ES_API_KEY=$(echo "$_key_resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['encoded'])")
   echo "API key generated OK"
 elif [[ -z "${ES_API_KEY:-}" ]]; then
@@ -214,7 +208,6 @@ fi
 export ES_HOST
 export ES_API_KEY
 
-# Derive KIBANA_URL from ES_HOST if not set
 if [[ -z "${KIBANA_URL:-}" ]]; then
   _base="${ES_HOST%/}"
   if [[ "$_base" =~ :9200$ ]]; then
@@ -225,12 +218,9 @@ if [[ -z "${KIBANA_URL:-}" ]]; then
 fi
 export KIBANA_URL
 
-if [[ -n "${ES_HOST_BULK:-}" ]]; then
-  export ES_HOST_BULK
-fi
+[[ -n "${ES_HOST_BULK:-}" ]] && export ES_HOST_BULK
 
-# Rewrite .env with canonical names so Python's load_env() always finds them,
-# regardless of what the Instruqt lifecycle script originally wrote.
+# Rewrite .env with canonical names so Python's load_env() always finds them.
 # (.env is gitignored — safe to store the session API key here.)
 {
   printf 'ES_HOST=%s\n'    "$ES_HOST"
@@ -239,77 +229,84 @@ fi
   [[ -n "${ES_HOST_BULK:-}" ]] && printf 'ES_HOST_BULK=%s\n' "$ES_HOST_BULK"
 } > "$SCRIPT_DIR/.env"
 
-# Check Python 3.9+
-if ! command -v python3 &>/dev/null; then
-  echo "ERROR: python3 not found. Install Python 3.9 or later." >&2
-  exit 1
-fi
-
-py_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-py_major=$(echo "$py_version" | cut -d. -f1)
-py_minor=$(echo "$py_version" | cut -d. -f2)
-
-if [[ "$py_major" -lt 3 ]] || { [[ "$py_major" -eq 3 ]] && [[ "$py_minor" -lt 9 ]]; }; then
-  echo "ERROR: Python 3.9+ required, found $py_version" >&2
-  exit 1
-fi
-echo "Python $py_version OK"
-
-# Install dependencies
-if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
-  echo "Installing Python dependencies..."
-  pip install -q -r "$SCRIPT_DIR/requirements.txt"
-fi
-
 echo "ES_HOST:    $ES_HOST"
 echo "KIBANA_URL: $KIBANA_URL"
 [[ -n "${ES_HOST_BULK:-}" ]] && echo "ES_HOST_BULK: $ES_HOST_BULK"
 [[ -n "${ES_USERNAME:-}" ]]  && echo "Auth:       username/password (${ES_USERNAME})"
 [[ -z "${ES_USERNAME:-}" ]]  && echo "Auth:       API key"
+[[ "$FROM_STAGE" -gt 1 ]]    && echo "(resuming from stage $FROM_STAGE)"
 
-# Wait for Kibana readiness (60 × 5s = 5 min)
-echo "Checking Kibana readiness..."
-kibana_ready=false
-for i in $(seq 1 60); do
-  if curl -sf -m 5 -o /dev/null \
-      -H "Authorization: ApiKey ${ES_API_KEY}" \
-      "${KIBANA_URL}/api/status" 2>/dev/null; then
-    echo "Kibana ready"
-    kibana_ready=true
-    break
+# ═════════════════════════════════════════════════════════════════════════════
+# [1/9] Preflight — Python, pip, Kibana readiness
+# ═════════════════════════════════════════════════════════════════════════════
+if [[ "$FROM_STAGE" -le 1 ]]; then
+  stage_begin "[1/9] Preflight"
+
+  if ! command -v python3 &>/dev/null; then
+    echo "ERROR: python3 not found. Install Python 3.9 or later." >&2
+    exit 1
   fi
-  echo "Waiting for Kibana... ($i/60)"
-  sleep 5
-done
 
-if [[ "$kibana_ready" == false ]]; then
-  echo "ERROR: Kibana did not become ready within 5 minutes." >&2
-  exit 1
+  py_version=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+  py_major=$(echo "$py_version" | cut -d. -f1)
+  py_minor=$(echo "$py_version" | cut -d. -f2)
+
+  if [[ "$py_major" -lt 3 ]] || { [[ "$py_major" -eq 3 ]] && [[ "$py_minor" -lt 9 ]]; }; then
+    echo "ERROR: Python 3.9+ required, found $py_version" >&2
+    exit 1
+  fi
+  echo "Python $py_version OK"
+
+  if [[ -f "$SCRIPT_DIR/requirements.txt" ]]; then
+    echo "Installing Python dependencies..."
+    pip install -q -r "$SCRIPT_DIR/requirements.txt"
+  fi
+
+  echo "Checking Kibana readiness..."
+  kibana_ready=false
+  for i in $(seq 1 60); do
+    if curl -sf -m 5 -o /dev/null \
+        -H "Authorization: ApiKey ${ES_API_KEY}" \
+        "${KIBANA_URL}/api/status" 2>/dev/null; then
+      echo "Kibana ready"
+      kibana_ready=true
+      break
+    fi
+    echo "Waiting for Kibana... ($i/60)"
+    sleep 5
+  done
+
+  if [[ "$kibana_ready" == false ]]; then
+    echo "ERROR: Kibana did not become ready within 5 minutes." >&2
+    exit 1
+  fi
+
+  stage_end
+
+  echo ""
+  echo "=== Setting Kibana default to Security view ==="
+  curl -sf -m 10 -o /dev/null \
+    -X POST "${KIBANA_URL}/api/kibana/settings" \
+    -H "Authorization: ApiKey ${ES_API_KEY}" \
+    -H "Content-Type: application/json" \
+    -H "kbn-xsrf: true" \
+    -H "elastic-api-version: 2023-10-31" \
+    -d '{"changes":{"defaultRoute":"/app/security"}}' \
+    && echo "Security view set" \
+    || echo "WARNING: Could not set Security view (non-fatal)"
 fi
-
-stage_end
-
-# ═════════════════════════════════════════════════════════════════════════════
-# [1b] Security view
-# ═════════════════════════════════════════════════════════════════════════════
-echo ""
-echo "=== Setting Kibana default to Security view ==="
-curl -sf -m 10 -o /dev/null \
-  -X POST "${KIBANA_URL}/api/kibana/settings" \
-  -H "Authorization: ApiKey ${ES_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -H "kbn-xsrf: true" \
-  -H "elastic-api-version: 2023-10-31" \
-  -d '{"changes":{"defaultRoute":"/app/security"}}' \
-  && echo "Security view set" \
-  || echo "WARNING: Could not set Security view (non-fatal)"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [2/9] Schema
 # ═════════════════════════════════════════════════════════════════════════════
-stage_begin "[2/9] Schema"
-python3 -m lab.schema
-stage_end
+if [[ "$FROM_STAGE" -le 2 ]]; then
+  stage_begin "[2/9] Schema"
+  python3 -m lab.schema
+  stage_end
+else
+  echo ""
+  echo "=== [2/9] Schema === (skipped via --from-stage $FROM_STAGE)"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [3/9] Rules
@@ -317,61 +314,95 @@ stage_end
 if [[ "$SKIP_RULES" == true ]]; then
   echo ""
   echo "=== [3/9] Rules === (skipped via --skip-rules)"
-else
+elif [[ "$FROM_STAGE" -le 3 ]]; then
   stage_begin "[3/9] Rules"
   python3 -m lab.rules
   stage_end
+else
+  echo ""
+  echo "=== [3/9] Rules === (skipped via --from-stage $FROM_STAGE)"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [4/9] Load historical data
 # ═════════════════════════════════════════════════════════════════════════════
-stage_begin "[4/9] Load historical data"
-python3 -m lab.load_data
-stage_end
+if [[ "$FROM_STAGE" -le 4 ]]; then
+  stage_begin "[4/9] Load historical data"
+  python3 -m lab.load_data
+  stage_end
+else
+  echo ""
+  echo "=== [4/9] Load historical data === (skipped via --from-stage $FROM_STAGE)"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [5/9] Read campaign metadata
 # ═════════════════════════════════════════════════════════════════════════════
-stage_begin "[5/9] Read campaign metadata"
+CAMPAIGN_START=""
+CAMPAIGN_END=""
+CAMPAIGN_START_HUMAN=""
+CAMPAIGN_END_HUMAN=""
 
-META=$(python3 -c "
+if [[ "$FROM_STAGE" -le 5 ]]; then
+  stage_begin "[5/9] Read campaign metadata"
+
+  META=$(python3 -c "
 from lab.esclient import make_es_client, load_env
-import json
+import json, time, sys
 e = load_env()
 es = make_es_client(e['ES_HOST'], e['ES_API_KEY'], e.get('ES_HOST_BULK'))
-r = es.search(index='workshop-meta', size=1)
-print(json.dumps(r['hits']['hits'][0]['_source']))
+for attempt in range(5):
+    try:
+        es.indices.refresh(index='workshop-meta')
+    except Exception:
+        pass
+    r = es.search(index='workshop-meta', size=1)
+    hits = r.get('hits', {}).get('hits', [])
+    if hits:
+        print(json.dumps(hits[0]['_source']))
+        sys.exit(0)
+    time.sleep(2)
+print('ERROR: no document in workshop-meta after 10s', file=sys.stderr)
+sys.exit(1)
 ")
 
-CAMPAIGN_START=$(echo "$META" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['campaign_start_ms'])")
-CAMPAIGN_END=$(echo "$META"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['campaign_end_ms'])")
+  CAMPAIGN_START=$(echo "$META" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['campaign_start_ms'])")
+  CAMPAIGN_END=$(echo "$META"   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['campaign_end_ms'])")
 
-CAMPAIGN_START_HUMAN=$(python3 -c "
+  CAMPAIGN_START_HUMAN=$(python3 -c "
 import datetime, sys
 ms = int(sys.argv[1])
 dt = datetime.datetime.utcfromtimestamp(ms / 1000)
 print(dt.strftime('%Y-%m-%d %H:%M'))
 " "$CAMPAIGN_START")
 
-CAMPAIGN_END_HUMAN=$(python3 -c "
+  CAMPAIGN_END_HUMAN=$(python3 -c "
 import datetime, sys
 ms = int(sys.argv[1])
 dt = datetime.datetime.utcfromtimestamp(ms / 1000)
 print(dt.strftime('%Y-%m-%d %H:%M'))
 " "$CAMPAIGN_END")
 
-echo "Campaign start: $CAMPAIGN_START_HUMAN UTC  ($CAMPAIGN_START ms)"
-echo "Campaign end:   $CAMPAIGN_END_HUMAN UTC  ($CAMPAIGN_END ms)"
+  echo "Campaign start: $CAMPAIGN_START_HUMAN UTC  ($CAMPAIGN_START ms)"
+  echo "Campaign end:   $CAMPAIGN_END_HUMAN UTC  ($CAMPAIGN_END ms)"
 
-stage_end
+  stage_end
+else
+  echo ""
+  echo "=== [5/9] Read campaign metadata === (skipped via --from-stage $FROM_STAGE)"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [6/9] Backfill
 # ═════════════════════════════════════════════════════════════════════════════
-stage_begin "[6/9] Backfill"
-python3 -m lab.backfill
-stage_end
+if [[ "$FROM_STAGE" -le 6 ]]; then
+  stage_begin "[6/9] Backfill"
+  python3 -m lab.backfill
+  stage_end
+else
+  echo ""
+  echo "=== [6/9] Backfill === (skipped via --from-stage $FROM_STAGE)"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [7/9] Live replay
@@ -379,18 +410,26 @@ stage_end
 if [[ "$NO_REPLAY" == true ]]; then
   echo ""
   echo "=== [7/9] Live replay === (skipped via --no-replay)"
-else
+elif [[ "$FROM_STAGE" -le 7 ]]; then
   stage_begin "[7/9] Live replay"
   python3 -m lab.replay start
   stage_end
+else
+  echo ""
+  echo "=== [7/9] Live replay === (skipped via --from-stage $FROM_STAGE)"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [8/9] Verify
 # ═════════════════════════════════════════════════════════════════════════════
-stage_begin "[8/9] Verify"
-python3 -m lab.verify
-stage_end
+if [[ "$FROM_STAGE" -le 8 ]]; then
+  stage_begin "[8/9] Verify"
+  python3 -m lab.verify
+  stage_end
+else
+  echo ""
+  echo "=== [8/9] Verify === (skipped via --from-stage $FROM_STAGE)"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 # [9/9] Summary
@@ -402,4 +441,4 @@ echo ""
 echo "=== Setup Complete ==="
 echo "Elapsed: $(format_elapsed "$TOTAL_ELAPSED")"
 echo "In Kibana: set time picker to 'Last 9 days'"
-echo "Attack campaign: $CAMPAIGN_START_HUMAN → $CAMPAIGN_END_HUMAN UTC"
+[[ -n "$CAMPAIGN_START_HUMAN" ]] && echo "Attack campaign: $CAMPAIGN_START_HUMAN → $CAMPAIGN_END_HUMAN UTC"
