@@ -89,22 +89,22 @@ fi
 
 # Support Instruqt/k8s environment variable conventions
 # ELASTICSEARCH_URL is the Instruqt name for the ES endpoint
-ES_HOST="${ES_HOST:-${ELASTICSEARCH_URL:-}}"
+# ES_HOST="${ES_HOST:-${ELASTICSEARCH_URL:-}}"
 
 # In k8s Instruqt labs the ECK operator stores the elastic password in a secret.
 # Pull it automatically when no password has been supplied via .env.
-if [[ -z "${ELASTICSEARCH_PASSWORD:-}" && -z "${ES_PASSWORD:-}" ]] && command -v kubectl &>/dev/null; then
-  _k8s_pass=$(kubectl get secret elasticsearch-es-elastic-user -n default \
-    -o go-template='{{.data.elastic | base64decode}}' 2>/dev/null || true)
-  if [[ -n "$_k8s_pass" ]]; then
-    ELASTICSEARCH_PASSWORD="$_k8s_pass"
-    echo "Loaded ELASTICSEARCH_PASSWORD from k8s secret (elasticsearch-es-elastic-user)"
-  fi
-fi
+# if [[ -z "${ELASTICSEARCH_PASSWORD:-}" && -z "${ES_PASSWORD:-}" ]] && command -v kubectl &>/dev/null; then
+#   _k8s_pass=$(kubectl get secret elasticsearch-es-elastic-user -n default \
+#     -o go-template='{{.data.elastic | base64decode}}' 2>/dev/null || true)
+#   if [[ -n "$_k8s_pass" ]]; then
+#     ELASTICSEARCH_PASSWORD="$_k8s_pass"
+#     echo "Loaded ELASTICSEARCH_PASSWORD from k8s secret (elasticsearch-es-elastic-user)"
+#   fi
+# fi
 
-# ELASTICSEARCH_USERNAME / ELASTICSEARCH_PASSWORD → ES_USERNAME / ES_PASSWORD
-ES_USERNAME="${ES_USERNAME:-${ELASTICSEARCH_USERNAME:-}}"
-ES_PASSWORD="${ES_PASSWORD:-${ELASTICSEARCH_PASSWORD:-}}"
+# # ELASTICSEARCH_USERNAME / ELASTICSEARCH_PASSWORD → ES_USERNAME / ES_PASSWORD
+# ES_USERNAME="${ES_USERNAME:-${ELASTICSEARCH_USERNAME:-}}"
+# ES_PASSWORD="${ES_PASSWORD:-${ELASTICSEARCH_PASSWORD:-}}"
 
 # ── Helper: stage timing ───────────────────────────────────────────────────────
 STAGE_START=0
